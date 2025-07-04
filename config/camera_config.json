@@ -1,0 +1,92 @@
+{
+    "use_sdk": false,
+    "cameras": [{
+        "color_image": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "format": 0
+        },
+        "depth_image": {
+            "width": 640,
+            "height": 576,
+            "fps": 15,
+            "format":0
+        },
+        "enc_image": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "format": 1,
+            "bitrate": 8192
+        },
+        "id": 0,
+        "name": "front",
+        "serial_num": "CL8M84100GK",
+        "sub_topic_color_image_raw": "/camera_head_front/color/image_raw",
+        "sub_topic_depth_image_raw": "/camera_head_front/depth/image_raw",
+        "rtsp_chn": 0,
+        "enable_depth": true,
+        "enable": true
+        },
+        {
+        "color_image": {
+            "width": 640,
+            "height": 480,
+            "fps": 15,
+            "format": 0
+        },
+        "depth_image": {
+            "width": 640,
+            "height": 576,
+            "fps": 15,
+            "format":0
+        },
+        "enc_image": {
+            "width": 640,
+            "height": 480,
+            "fps": 15,
+            "format": 1,
+            "bitrate": 8192
+        },
+        "id": 1,
+        "name": "left",
+        "serial_num": "CP7JC420000T",
+        "sub_topic_color_image_raw": "/left/color/image_raw",
+        "sub_topic_depth_image_raw": "/left/depth/image_raw",
+        "rtsp_chn": 1,
+        "enable_depth": true,
+        "enable": true
+        },
+        {
+        "color_image": {
+            "width": 640,
+            "height": 480,
+            "fps": 15,
+            "format": 0
+        },
+        "depth_image": {
+            "width": 640,
+            "height": 576,
+            "fps": 15,
+            "format":0
+        },
+        "enc_image": {
+            "width": 640,
+            "height": 480,
+            "fps": 15,
+            "format": 1,
+            "bitrate": 8192
+        },
+        "id": 2,
+        "name": "right",
+        "serial_num": "CP7JC42000SD",
+        "sub_topic_color_image_raw": "/right/color/image_raw",
+        "sub_topic_depth_image_raw": "/right/depth/image_raw",
+        "rtsp_chn": 2,
+        "enable_depth": true,
+        "enable": true
+        }
+    ]
+}
+  

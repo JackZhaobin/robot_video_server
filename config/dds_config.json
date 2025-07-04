@@ -1,0 +1,20 @@
+{
+  "domain": {
+      "id": 66,
+      "multicastIp": "224.5.6.7",
+      "multicastPort": 8888,
+      "period": 3
+  },
+  "network": {
+      "ethName": "eth0"
+  },
+  "transport": {
+      "portRange": "10000-10050",
+      "excludePort": [],
+      "domainSockRange": "10000-10050",
+      "shmKeyRange": "10000-10050"
+  },
+  "mempool": {
+      "maxSize": 50000000
+  }
+}
