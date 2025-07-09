@@ -71,6 +71,26 @@ void convertRGB2YUV420M(const uint8_t* rgb, int32_t width, int32_t height,
   }
 }
 
+void convertY8ToYUV420M(const uint8_t* y8_data, int32_t width, int32_t height,
+                        uint8_t* yuv) {
+                      
+    if (!y8_data || !yuv || width <= 0 || height <= 0) {
+        return;
+    }
+    
+    const int32_t frameSize = width * height;
+    const int32_t uvSize = frameSize / 4;
+    
+    //1. 使用单次memcpy操作复制Y分量
+    std::memcpy(yuv, y8_data, frameSize);
+    
+    //2. 使用更高效的方式填充U和V分量
+    std::fill_n(yuv + frameSize, uvSize, 128);           // U分量
+    std::fill_n(yuv + frameSize + uvSize, uvSize, 128);  // V分量
+
+
+ }
+
 void convertDepth2YUV420M(const uint16_t* depth_data, int32_t width,
                           int32_t height, int32_t bit_depth,
                           uint8_t* yuv_buffer) {

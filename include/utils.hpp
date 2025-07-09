@@ -53,6 +53,9 @@ bool dumpBufferToFile(const uint8_t* buffer, size_t size,
 void convertRGB2YUV420M(const uint8_t* rgb, int width, int height,
                         uint8_t* yuv);
 
+void convertY8ToYUV420M(const uint8_t* y8_data, int32_t width, int32_t height,
+                        uint8_t* yuv);
+
 void convertDepth2YUV420M(const uint16_t* depth_data, int32_t width,
                           int32_t height, int32_t bit_depth,
                           uint8_t* yuv_buffer);

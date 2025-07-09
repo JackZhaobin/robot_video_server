@@ -27,27 +27,46 @@
 
 // enum { IMAGE_TYPE_COLOR = 0, IMAGE_TYPE_DEPTH, IMAGE_TYPE_END } ImageType_e;
 
-struct ImageConfig_t {
+struct ImageStreamConfig_t {
+  std::string m_name;
   uint32_t m_width;
   uint32_t m_height;
   uint32_t m_fps;
-  int32_t m_fmt;
+  int32_t  m_fmt;
   uint32_t m_bitrate;
+  uint32_t m_rtsp_chn;
+  bool     m_b_enable;
 };
+
+struct ImageDepthConfig_t {
+  uint32_t m_width;
+  uint32_t m_height;
+  uint32_t m_fps;
+  int32_t  m_fmt;
+  
+};
+
 
 struct CameraConfig_t {
   int32_t m_id;
-  int32_t m_rtsp_chn;
-  bool m_b_enable;
-  bool m_b_enable_depth;
   std::string m_name_;
   std::string m_serial_num;
+  bool m_b_enable_depth;
+  bool m_b_enable_stream;
+ 
+
   std::string m_topic_color_image_raw;
   std::string m_topic_depth_image_raw;
+  std::string m_topic_left_ir_image_raw;
+  std::string m_topic_right_ir_image_raw;
 
-  ImageConfig_t m_color_image;
-  ImageConfig_t m_depth_image;
-  ImageConfig_t m_enc_image;
+  
+  ImageDepthConfig_t m_depth_image;
+  std::vector<ImageStreamConfig_t> m_video_streams;
+
+  
+
+  
 };
 
 class RobotVideoServer : public rclcpp::Node {
@@ -62,10 +81,17 @@ class RobotVideoServer : public rclcpp::Node {
   bool loadCameraConfig(const std::string& config_file_path);
   bool loadLoggerConfig(const std::string& config_file_path);
   bool initLogger();
+
+  bool setupSDKMultiStream();
+  bool setupROS2MultiStream();
   bool setupVideoSource();
+
   void destroyVideoSource();
+
   bool setupVideoEncoder();
+  void destroyVideoStreamEncoders();
   void destroyVideoEncoder();
+
   bool setupRtspServer();
   void destroyRtstpServer();
 
@@ -82,14 +108,20 @@ class RobotVideoServer : public rclcpp::Node {
   int32_t m_logger_ = 0;
 
   std::map<int32_t, std::shared_ptr<VideoCapture>> m_captures_;
-  std::map<int32_t, std::shared_ptr<VideoEncoder>> m_encoders_;
+ // std::map<int32_t, std::shared_ptr<VideoEncoder>> m_encoders_;  
   std::map<int32_t, std::shared_ptr<DepthImageEncoder>> m_depth_encoders_;
-  std::map<int32_t, rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr>
-      m_color_image_subs;
+ // std::map<int32_t, rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> m_color_image_subs;
   std::map<int32_t, rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr>
       m_depth_image_subs;
 
   std::shared_ptr<CDDSWrapper> m_dds_wrapper = nullptr;
   std::map<int32_t, CDataWriter*> m_depth_writers;
   std::map<int32_t, uint32_t> m_depth_frame_ids;
+
+
+  // key: camera_id, value: map<stream_name, encoder>
+  std::map<int32_t, std::map<std::string, std::shared_ptr<VideoEncoder>>> m_stream_encoders_;
+
+  // 多流订阅器
+  std::map<int32_t, std::map<std::string, rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr>> m_image_subs_;
 };
