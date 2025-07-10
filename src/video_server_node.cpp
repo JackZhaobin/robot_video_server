@@ -51,108 +51,113 @@ bool RobotVideoServer::setupSDKMultiStream()
   return true;
 }
 
-bool RobotVideoServer::setupROS2MultiStream()
-{
+/*
+ *
+ */
+bool RobotVideoServer::setupROS2MultiStream() {
+  for (auto &camera : m_camera_config_) {
+    /*
+     * 视频编码处理
+     */
+    if (!camera.second.m_b_enable_stream) {
+      continue;
+    }
 
-   for (auto &camera : m_camera_config_) 
-   {
+    std::map<std::string, rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> camera_subs;
 
-
-      /*
-       * 视频编码处理
-       */
-      if (!camera.second.m_b_enable_stream) {
-            continue;
+    // 为每个视频流创建订阅
+    for (auto &stream : camera.second.m_video_streams) {
+      if (!stream.m_b_enable) {
+        continue;
       }
 
-      std::map<std::string, rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> camera_subs;
+      // 直接使用配置中的topic
+      std::string topic_name = stream.m_topic;
 
-       // 为每个视频流创建订阅
-      for (auto &stream : camera.second.m_video_streams) 
-      {
-           if (!stream.m_b_enable) {
-                continue;
-            }
+      auto ImageCallback = [this, camera_id = camera.second.m_id, 
+                           stream_name = stream.m_name, 
+                           stream_format = stream.m_fmt](
+                               const sensor_msgs::msg::Image::SharedPtr msg) {
+        
+        auto size = msg->width * msg->height * 3 / 2;  // YUV420M size
+        
+        Image_t *image_ptr = (Image_t *)malloc(sizeof(Image_t) + size);
+        image_ptr->m_width = msg->width;
+        image_ptr->m_height = msg->height;
+        image_ptr->m_pixfmt = 0;
+        image_ptr->m_length = size;
+        
+        uint64_t sec = msg->header.stamp.sec;
+        uint64_t nsec = msg->header.stamp.nanosec;
+        image_ptr->m_timestamp = sec * 1000000ULL + nsec / 1000ULL;
 
-            std::string topic_name;
-            if (stream.m_name == "color_image") {
-                topic_name = camera.second.m_topic_color_image_raw;
-            } else if (stream.m_name == "left_ir_image") {
-                topic_name = camera.second.m_topic_left_ir_image_raw;
-            } else if (stream.m_name == "right_ir_image") {
-                topic_name = camera.second.m_topic_right_ir_image_raw;
-            } else {
-                YLLOG_ERR("Unknown stream name: %s", stream.m_name.c_str());
-                continue;
-            }
+        // 根据流格式进行相应转换
+        switch(stream_format) {
+          case 0:  // RGB
+            convertRGB2YUV420M(msg->data.data(), msg->width, msg->height,
+                              image_ptr->m_data);
+            break;
+          case 1:  // Y8/IR
+            convertY8ToYUV420M(msg->data.data(), msg->width, msg->height,
+                              image_ptr->m_data);
+            break;
+          default:
+            YLLOG_ERR("Unsupported format: %d", stream_format);
+            free(image_ptr);
+            return;
+        }
 
-            auto ImageCallback = [this, camera_id = camera.second.m_id, 
-                                 stream_name = stream.m_name, 
-                                 stream_format = stream.m_fmt](
-                                     const sensor_msgs::msg::Image::SharedPtr msg) {
-                
-                auto size = msg->width * msg->height * 3 / 2;  // YUV420M size
-                
-                Image_t *image_ptr = (Image_t *)malloc(sizeof(Image_t) + size);
-                image_ptr->m_width = msg->width;
-                image_ptr->m_height = msg->height;
-                image_ptr->m_pixfmt = 0;
-                image_ptr->m_length = size;
-                
-                uint64_t sec = msg->header.stamp.sec;
-                uint64_t nsec = msg->header.stamp.nanosec;
-                image_ptr->m_timestamp = sec * 1000000ULL + nsec / 1000ULL;
+        // 发送到对应的编码器
+        auto camera_encoders = m_stream_encoders_.find(camera_id);
+        if (camera_encoders != m_stream_encoders_.end()) {
+          auto encoder = camera_encoders->second.find(stream_name);
+          if (encoder != camera_encoders->second.end()) {
+            encoder->second->putImage(image_ptr);
+          }
+        }
+      };
 
-                // 根据流格式进行相应转换
-                switch(stream_format) {
-                    case 0:  // RGB
-                        convertRGB2YUV420M(msg->data.data(), msg->width, msg->height,
-                                          image_ptr->m_data);
-                        break;
-                    case 1:  // Y8/IR
-                        convertY8ToYUV420M(msg->data.data(), msg->width, msg->height,
-                                          image_ptr->m_data);
-                        break;
-                    default:
-                        YLLOG_ERR("Unsupported format: %d", stream_format);
-                        free(image_ptr);
-                        return;
-                 }
+      auto subscription = this->create_subscription<sensor_msgs::msg::Image>(topic_name, 10, ImageCallback);
+      camera_subs[stream.m_name] = subscription;
+        
+      YLLOG_INFO("Created subscription for camera %d, stream %s, topic %s", 
+                camera.second.m_id, stream.m_name.c_str(), topic_name.c_str());
+    }
 
-               // 发送到对应的编码器
-                auto camera_encoders = m_stream_encoders_.find(camera_id);
-                if (camera_encoders != m_stream_encoders_.end()) {
-                    auto encoder = camera_encoders->second.find(stream_name);
-                    if (encoder != camera_encoders->second.end()) {
-                        encoder->second->putImage(image_ptr);
-                    }
-                }
-
-          };
+    m_image_subs_[camera.second.m_id] = camera_subs;
 
 
-          auto subscription = this->create_subscription<sensor_msgs::msg::Image>(topic_name, 10, ImageCallback);
-          camera_subs[stream.m_name] = subscription;
-            
-          YLLOG_INFO("Created subscription for camera %d, stream %s, topic %s", 
-                      camera.second.m_id, stream.m_name.c_str(), topic_name.c_str());
-      }
+    /*
+    * 修改：压缩流处理 - 使用独立的编码器
+    */
+    if (camera.second.m_b_enable_compress) {
+      std::map<std::string, rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> compress_subs;
 
+      for (auto &compress_stream : camera.second.m_compress_streams) {
+        if (!compress_stream.m_b_enable) {
+          continue;
+        }
 
-      m_image_subs_[camera.second.m_id] = camera_subs;
-
-      /*
-       *图像压缩处理
-       */
-      if (camera.second.m_b_enable_depth) {
-        auto DepthCallback = [this, id = camera.second.m_id](
-                                 const sensor_msgs::msg::Image::SharedPtr msg) {
-          m_depth_frame_ids[id]++;
-
+        auto CompressCallback = [this, camera_id = camera.second.m_id, 
+                              compress_name = compress_stream.m_name](
+                                  const sensor_msgs::msg::Image::SharedPtr msg) {
+          
           uint32_t size = msg->data.size();
-
           Image_t *image_ptr = (Image_t *)malloc(sizeof(Image_t) + size);
-          image_ptr->m_id = m_depth_frame_ids[id];
+          
+          // 使用独立的帧ID计数器
+          auto camera_frame_ids = m_compress_frame_ids_.find(camera_id);
+          if (camera_frame_ids != m_compress_frame_ids_.end()) {
+            auto frame_id_it = camera_frame_ids->second.find(compress_name);
+            if (frame_id_it != camera_frame_ids->second.end()) {
+              image_ptr->m_id = ++frame_id_it->second;
+            } else {
+              image_ptr->m_id = 1;
+            }
+          } else {
+            image_ptr->m_id = 1;
+          }
+          
           image_ptr->m_width = msg->width;
           image_ptr->m_height = msg->height;
           image_ptr->m_pixfmt = 0;
@@ -162,28 +167,45 @@ bool RobotVideoServer::setupROS2MultiStream()
           uint64_t nsec = msg->header.stamp.nanosec;
           image_ptr->m_timestamp = sec * 1000000ULL + nsec / 1000ULL;
 
-          // image_ptr->m_timestamp = getCurrentTimeUs();
-
-          YLLOG_DBG("Depth %d: timestamp %lu, current time %lu, diff %u us.", id, image_ptr->m_timestamp, getCurrentTimeUs(), getCurrentTimeUs()-image_ptr->m_timestamp);
+          YLLOG_DBG("Compress %s: timestamp %lu, current time %lu, diff %u us.", 
+                  compress_name.c_str(), image_ptr->m_timestamp, getCurrentTimeUs(), 
+                  getCurrentTimeUs()-image_ptr->m_timestamp);
 
           memcpy(image_ptr->m_data, msg->data.data(), msg->data.size());
 
-          m_depth_encoders_[id]->putImage(image_ptr);
+          // 找到对应的独立编码器
+          auto camera_encoders = m_compress_encoders_.find(camera_id);
+          if (camera_encoders != m_compress_encoders_.end()) {
+            auto encoder_it = camera_encoders->second.find(compress_name);
+            if (encoder_it != camera_encoders->second.end()) {
+              encoder_it->second->putImage(image_ptr);
+            } else {
+              YLLOG_ERR("Compress encoder not found for camera %d, stream %s", 
+                        camera_id, compress_name.c_str());
+              free(image_ptr);
+            }
+          } else {
+            YLLOG_ERR("Camera compress encoders not found for camera %d", camera_id);
+            free(image_ptr);
+          }
         };
 
-        // std::cout << "----------- m_topic_depth_image_raw: " <<
-        // camera.second.m_topic_depth_image_raw << std::endl;
-
-        auto p_depth_subscription =
-            this->create_subscription<sensor_msgs::msg::Image>(
-                camera.second.m_topic_depth_image_raw, 10, DepthCallback);
-        m_depth_image_subs[camera.second.m_id] = p_depth_subscription;
+        auto p_compress_subscription = this->create_subscription<sensor_msgs::msg::Image>(
+            compress_stream.m_topic, 10, CompressCallback);
+        
+        // 保存压缩流订阅器
+        compress_subs[compress_stream.m_name] = p_compress_subscription;
+        
+        YLLOG_INFO("Created compress subscription for camera %d, stream %s, topic %s", 
+                  camera.second.m_id, compress_stream.m_name.c_str(), compress_stream.m_topic.c_str());
       }
 
-
-   }
-   return true;
-
+      // 保存该相机的所有压缩流订阅器
+      m_compress_subs_[camera.second.m_id] = compress_subs;
+    }
+  }
+  
+  return true;
 }
 
 
@@ -210,75 +232,112 @@ void RobotVideoServer::destroyVideoSource() {
   }
 }
 
-
 bool RobotVideoServer::setupVideoEncoder() {
-
-for (auto &camera : m_camera_config_) {
+  for (auto &camera : m_camera_config_) {
     if (!camera.second.m_b_enable_stream) {
       continue;
     }
 
-  
     // 为每个相机的每个视频流创建编码器
     std::map<std::string, std::shared_ptr<VideoEncoder>> camera_encoders;
     int stream_index = 0;
         
-    for (auto &stream : camera.second.m_video_streams) 
-    {
-        if (!stream.m_b_enable) {
-            stream_index++;
-            continue;
-        }
-        EncCreateParam_t create_param;
+    for (auto &stream : camera.second.m_video_streams) {
+      if (!stream.m_b_enable) {
+        stream_index++;
+        continue;
+      }
+      
+      EncCreateParam_t create_param;
+      create_param.m_raw_pixfmt = V4L2_PIX_FMT_YUV420M;
+      create_param.m_width = stream.m_width;
+      create_param.m_height = stream.m_height;
+      create_param.m_encoder_pixfmt = 0;  // H264
+      create_param.m_encode_width = stream.m_width;
+      create_param.m_encode_height = stream.m_height;
+      create_param.m_fps = stream.m_fps;
+      create_param.m_bitrate = stream.m_bitrate * 1024;
+      create_param.m_ratecontrol = 1;  // CBR
+      create_param.m_rtsp_chn_id = stream.m_rtsp_chn;
 
-        create_param.m_raw_pixfmt = V4L2_PIX_FMT_YUV420M;
-        create_param.m_width = stream.m_width;
-        create_param.m_height = stream.m_height;
-        create_param.m_encoder_pixfmt = 0;  // H264
-        create_param.m_encode_width = stream.m_width;
-        create_param.m_encode_height = stream.m_height;
-        create_param.m_fps = stream.m_fps;
-        create_param.m_bitrate = stream.m_bitrate * 1024;
-        create_param.m_ratecontrol = 1;  // CBR
-        create_param.m_rtsp_chn_id = stream.m_rtsp_chn;
-
-
-        // 创建编码器，使用唯一ID：camera_id * 100 + stream_index
-        uint32_t encoder_id = camera.second.m_id * 100 + stream_index;
-        auto p_encoder = std::make_shared<VideoEncoder>(encoder_id, create_param);
-        
-        if (p_encoder->start()) {
-            camera_encoders[stream.m_name] = p_encoder;
-            YLLOG_INFO("Created encoder for camera %d, stream %s, RTSP channel %d", 
-                      camera.second.m_id, stream.m_name.c_str(), stream.m_rtsp_chn);
-        } else {
-            YLLOG_ERR("Failed to start encoder for camera %d, stream %s", 
-                      camera.second.m_id, stream.m_name.c_str());
-        }
+      uint32_t encoder_id = camera.second.m_id * 100 + stream_index;
+      auto p_encoder = std::make_shared<VideoEncoder>(encoder_id, create_param);
+      
+      if (p_encoder->start()) {
+        camera_encoders[stream.m_name] = p_encoder;
+        YLLOG_INFO("Created encoder for camera %d, stream %s, RTSP channel %d", 
+                  camera.second.m_id, stream.m_name.c_str(), stream.m_rtsp_chn);
+      } else {
+        YLLOG_ERR("Failed to start encoder for camera %d, stream %s", 
+                  camera.second.m_id, stream.m_name.c_str());
+      }
+      stream_index++;
     }
     m_stream_encoders_[camera.second.m_id] = camera_encoders;
 
-
     /*
-     * 编码深度流
+     * 修改：为每个压缩流创建独立的编码器
      */
-    if (camera.second.m_b_enable_depth) {
-      std::string compressed_topic =
-          camera.second.m_topic_depth_image_raw + "/compressed";
-      m_depth_writers[camera.second.m_id] =
-          m_dds_wrapper->createDataWriter(compressed_topic);
+    if (camera.second.m_b_enable_compress) {
+      std::map<std::string, std::shared_ptr<DepthImageEncoder>> camera_compress_encoders;
+      std::map<std::string, CDataWriter*> camera_compress_writers;
+      std::map<std::string, uint32_t> camera_compress_frame_ids;
 
-      auto p_depth_encoder = std::make_shared<DepthImageEncoder>(
-          camera.second.m_id, m_depth_writers[camera.second.m_id]);
-      if (p_depth_encoder->start()) {
-        m_depth_encoders_[camera.second.m_id] = p_depth_encoder;
+
+      int compress_stream_index = 0;
+      for (auto &compress_stream : camera.second.m_compress_streams) {
+        if (!compress_stream.m_b_enable) {
+          compress_stream_index++;
+          continue;
+        }
+
+        // 为每个压缩流创建独立的topic
+        std::string compressed_topic = compress_stream.m_topic + "/compressed";
+        //std::string compressed_topic = compress_stream.m_topic + "/zdepth";
+        
+        // 为每个压缩流创建独立的数据写入器
+        camera_compress_writers[compress_stream.m_name] = m_dds_wrapper->createDataWriter(compressed_topic);
+       
+       /*
+        if (!camera_compress_writers[compress_stream.m_name]) {
+          YLLOG_ERR("Failed to create data writer for camera %d, compress stream %s", 
+                    camera.second.m_id, compress_stream.m_name.c_str());
+          continue;
+        }*/
+        
+        // 创建唯一的编码器ID：camera_id * 1000 + compress_stream_index
+        int32_t compress_encoder_id = camera.second.m_id * 1000 + compress_stream_index;
+  
+        
+        // 为每个压缩流创建独立的编码器
+        auto p_compress_encoder = std::make_shared<DepthImageEncoder>(compress_encoder_id, camera_compress_writers[compress_stream.m_name] );
+        
+        if (p_compress_encoder->start()) {
+          // 保存到对应的映射中
+          camera_compress_encoders[compress_stream.m_name] = p_compress_encoder;
+         // camera_compress_writers[compress_stream.m_name] = writer;
+          camera_compress_frame_ids[compress_stream.m_name] = 0;  // 初始化帧ID
+          
+          YLLOG_INFO("Created compress encoder for camera %d, stream %s, topic %s", 
+                    camera.second.m_id, compress_stream.m_name.c_str(), compressed_topic.c_str());
+        } else {
+          YLLOG_ERR("Failed to start compress encoder for camera %d, stream %s", 
+                    camera.second.m_id, compress_stream.m_name.c_str());
+          // 清理失败的writer
+          // 注意：这里需要根据你的DDS库提供相应的清理函数
+          // m_dds_wrapper->destroyDataWriter(writer);
+        }
+        compress_stream_index++;
       }
+      
+      // 保存该相机的所有压缩编码器和相关资源
+      m_compress_encoders_[camera.second.m_id] = camera_compress_encoders;
+      m_compress_writers_[camera.second.m_id] = camera_compress_writers;
+      m_compress_frame_ids_[camera.second.m_id] = camera_compress_frame_ids;
     }
   }
 
   return true;
-
-
 }
 
 void RobotVideoServer::destroyVideoStreamEncoders() {
@@ -319,6 +378,8 @@ void RobotVideoServer::destroyVideoStreamEncoders() {
   YLLOG_INFO("All video stream encoders destroyed");
 }
 
+
+#if 0
 void RobotVideoServer::destroyVideoEncoder() {
 
   destroyVideoStreamEncoders(); 
@@ -327,6 +388,71 @@ void RobotVideoServer::destroyVideoEncoder() {
     depthEncoder.second->stop();
   }
   m_depth_encoders_.clear();
+}
+#endif
+
+void RobotVideoServer::destroyVideoEncoder() {
+  // 销毁视频流编码器
+  destroyVideoStreamEncoders(); 
+
+  // 销毁压缩流编码器
+  for (auto &camera_compress_encoders : m_compress_encoders_) {
+    int32_t camera_id = camera_compress_encoders.first;
+    
+    YLLOG_DBG("Destroying compress encoders for camera %d", camera_id);
+    
+    for (auto &compress_encoder : camera_compress_encoders.second) {
+      const std::string &compress_name = compress_encoder.first;
+      auto &encoder = compress_encoder.second;
+      
+      if (encoder) {
+        YLLOG_DBG("Stopping compress encoder for camera %d, stream %s", 
+                  camera_id, compress_name.c_str());
+        
+        try {
+          encoder->stop();
+          YLLOG_DBG("Successfully stopped compress encoder for camera %d, stream %s", 
+                    camera_id, compress_name.c_str());
+        } catch (const std::exception& e) {
+          YLLOG_ERR("Exception while stopping compress encoder for camera %d, stream %s: %s", 
+                    camera_id, compress_name.c_str(), e.what());
+        }
+      } else {
+        YLLOG_WARN("Null compress encoder found for camera %d, stream %s", 
+                   camera_id, compress_name.c_str());
+      }
+    }
+    
+    // 清空该相机的所有压缩编码器
+    camera_compress_encoders.second.clear();
+  }
+  
+  // 清空整个压缩编码器映射
+  m_compress_encoders_.clear();
+  
+  // 清理压缩流数据写入器
+  for (auto &camera_writers : m_compress_writers_) {
+    int32_t camera_id = camera_writers.first;
+    
+    for (auto &writer_pair : camera_writers.second) {
+      const std::string &compress_name = writer_pair.first;
+      CDataWriter* writer = writer_pair.second;
+      
+      if (writer) {
+        YLLOG_DBG("Destroying compress writer for camera %d, stream %s", 
+                  camera_id, compress_name.c_str());
+        // 根据你的DDS库提供相应的清理函数
+        // m_dds_wrapper->destroyDataWriter(writer);
+      }
+    }
+    
+    camera_writers.second.clear();
+  }
+  
+  m_compress_writers_.clear();
+  m_compress_frame_ids_.clear();
+  
+  YLLOG_INFO("All compress encoders destroyed");
 }
 
 bool RobotVideoServer::setupRtspServer() {
@@ -374,11 +500,12 @@ void RobotVideoServer::deinit() {
   destroyRtstpServer();
 }
 
+/*
+ *
+ */
 bool RobotVideoServer::loadCameraConfig(const std::string &config_file_path) {
-
   YLLOG_INFO("=== Starting to load camera configuration ===");
   YLLOG_INFO("Config file path: %s", config_file_path.c_str());
-
 
   std::ifstream file(config_file_path);
   if (!file.is_open()) {
@@ -390,23 +517,21 @@ bool RobotVideoServer::loadCameraConfig(const std::string &config_file_path) {
 
   nlohmann::json jsonData;
   try {
-        file >> jsonData;
-        YLLOG_INFO("Successfully parsed JSON data");
-    } catch (const std::exception& e) {
-        YLLOG_ERR("Failed to parse JSON: %s", e.what());
-        return false;
-    }
+    file >> jsonData;
+    YLLOG_INFO("Successfully parsed JSON data");
+  } catch (const std::exception& e) {
+    YLLOG_ERR("Failed to parse JSON: %s", e.what());
+    return false;
+  }
 
   // 解析use_sdk配置
   try {
-      m_b_use_sdk_ = jsonData["use_sdk"].get<bool>();
-      YLLOG_INFO("use_sdk: %s", m_b_use_sdk_ ? "true" : "false");
+    m_b_use_sdk_ = jsonData["use_sdk"].get<bool>();
+    YLLOG_INFO("use_sdk: %s", m_b_use_sdk_ ? "true" : "false");
   } catch (const std::exception& e) {
-      YLLOG_ERR("Failed to parse use_sdk: %s", e.what());
-      return false;
+    YLLOG_ERR("Failed to parse use_sdk: %s", e.what());
+    return false;
   }
-
-
 
   auto cameras = jsonData["cameras"];
   YLLOG_INFO("Found %zu cameras in configuration", cameras.size());
@@ -419,203 +544,111 @@ bool RobotVideoServer::loadCameraConfig(const std::string &config_file_path) {
     CameraConfig_t camConfig;
 
     try {
-        // 解析基本相机配置
-        camConfig.m_id = camera["id"].get<int32_t>();
-        camConfig.m_name_ = camera["name"].get<std::string>();
-        camConfig.m_serial_num = camera["serial_num"].get<std::string>();
-        camConfig.m_b_enable_depth = camera["enable_depth"].get<bool>();
-        camConfig.m_b_enable_stream = camera["enable_stream"].get<bool>();
-        
-        YLLOG_INFO("Camera ID: %d", camConfig.m_id);
-        YLLOG_INFO("Camera name: %s", camConfig.m_name_.c_str());
-        YLLOG_INFO("Serial number: %s", camConfig.m_serial_num.c_str());
-        YLLOG_INFO("Enable depth: %s", camConfig.m_b_enable_depth ? "true" : "false");
-        YLLOG_INFO("Enable stream: %s", camConfig.m_b_enable_stream ? "true" : "false");
-        
+      // 解析基本相机配置
+      camConfig.m_id = camera["id"].get<int32_t>();
+      camConfig.m_name_ = camera["name"].get<std::string>();
+      camConfig.m_serial_num = camera["serial_num"].get<std::string>();
+      camConfig.m_b_enable_compress = camera["enable_compress"].get<bool>();  // 修改字段名
+      camConfig.m_b_enable_stream = camera["enable_stream"].get<bool>();
+      
+      YLLOG_INFO("Camera ID: %d", camConfig.m_id);
+      YLLOG_INFO("Camera name: %s", camConfig.m_name_.c_str());
+      YLLOG_INFO("Serial number: %s", camConfig.m_serial_num.c_str());
+      YLLOG_INFO("Enable compress: %s", camConfig.m_b_enable_compress ? "true" : "false");
+      YLLOG_INFO("Enable stream: %s", camConfig.m_b_enable_stream ? "true" : "false");
+      
     } catch (const std::exception& e) {
-        YLLOG_ERR("Failed to parse basic camera config for camera %d: %s", camera_count, e.what());
-        continue;
+      YLLOG_ERR("Failed to parse basic camera config for camera %d: %s", camera_count, e.what());
+      continue;
     }
 
-
-
-    // 解析多个视频流
+    // 解析视频流配置（修改部分）
     try {
-          auto video_images = camera["video_image"];
-          YLLOG_INFO("Found %zu video streams for camera %d", video_images.size(), camConfig.m_id);
-          
-          int stream_count = 0;
-          for (auto &video_img : video_images) {
-              stream_count++;
-              auto img = video_img["image"];
-              
-              ImageStreamConfig_t streamConfig;
-              streamConfig.m_name = img["name"].get<std::string>();
-              streamConfig.m_width = img["width"].get<uint32_t>();
-              streamConfig.m_height = img["height"].get<uint32_t>();
-              streamConfig.m_fps = img["fps"].get<uint32_t>();
-              streamConfig.m_fmt = img["format"].get<int32_t>();
-              streamConfig.m_bitrate = img["bitrate"].get<uint32_t>();
-              streamConfig.m_rtsp_chn = img["rtsp_chn"].get<int32_t>();
-              streamConfig.m_b_enable = img["enable"].get<bool>();
-              
-              YLLOG_INFO("  Stream %d:", stream_count);
-              YLLOG_INFO("    Name: %s", streamConfig.m_name.c_str());
-              YLLOG_INFO("    Resolution: %ux%u", streamConfig.m_width, streamConfig.m_height);
-              YLLOG_INFO("    FPS: %u", streamConfig.m_fps);
-              YLLOG_INFO("    Format: %d", streamConfig.m_fmt);
-              YLLOG_INFO("    Bitrate: %u", streamConfig.m_bitrate);
-              YLLOG_INFO("    RTSP channel: %d", streamConfig.m_rtsp_chn);
-              YLLOG_INFO("    Enabled: %s", streamConfig.m_b_enable ? "true" : "false");
-              
-              camConfig.m_video_streams.push_back(streamConfig);
-          }
-          
-          YLLOG_INFO("Successfully parsed %zu video streams for camera %d", camConfig.m_video_streams.size(), camConfig.m_id);
-            
+      auto video_images = camera["video_image"];
+      YLLOG_INFO("Found %zu video streams for camera %d", video_images.size(), camConfig.m_id);
+      
+      int stream_count = 0;
+      for (auto &video_img : video_images) {
+        stream_count++;
+        auto img = video_img["image"];
+        
+        ImageStreamConfig_t streamConfig;
+        streamConfig.m_name = img["name"].get<std::string>();
+        streamConfig.m_width = img["width"].get<uint32_t>();
+        streamConfig.m_height = img["height"].get<uint32_t>();
+        streamConfig.m_fps = img["fps"].get<uint32_t>();
+        streamConfig.m_fmt = img["format"].get<int32_t>();
+        streamConfig.m_bitrate = img["bitrate"].get<uint32_t>();
+        streamConfig.m_rtsp_chn = img["rtsp_chn"].get<int32_t>();
+        streamConfig.m_topic = img["topic"].get<std::string>();  // 新增topic解析
+        streamConfig.m_b_enable = img["enable"].get<bool>();
+        
+        YLLOG_INFO("  Stream %d:", stream_count);
+        YLLOG_INFO("    Name: %s", streamConfig.m_name.c_str());
+        YLLOG_INFO("    Topic: %s", streamConfig.m_topic.c_str());  // 新增日志
+        YLLOG_INFO("    Resolution: %ux%u", streamConfig.m_width, streamConfig.m_height);
+        YLLOG_INFO("    FPS: %u", streamConfig.m_fps);
+        YLLOG_INFO("    Format: %d", streamConfig.m_fmt);
+        YLLOG_INFO("    Bitrate: %u", streamConfig.m_bitrate);
+        YLLOG_INFO("    RTSP channel: %d", streamConfig.m_rtsp_chn);
+        YLLOG_INFO("    Enabled: %s", streamConfig.m_b_enable ? "true" : "false");
+        
+        camConfig.m_video_streams.push_back(streamConfig);
+      }
+      
+      YLLOG_INFO("Successfully parsed %zu video streams for camera %d", camConfig.m_video_streams.size(), camConfig.m_id);
+        
     } catch (const std::exception& e) {
-        YLLOG_ERR("Failed to parse video streams for camera %d: %s", camConfig.m_id, e.what());
-        continue;
+      YLLOG_ERR("Failed to parse video streams for camera %d: %s", camConfig.m_id, e.what());
+      continue;
     }
 
-    
-    // 解析深度配置
+    // 新增：解析压缩流配置
     try {
-        auto depth_img = camera["depth_image"];
-        camConfig.m_depth_image.m_width = depth_img["width"].get<uint32_t>();
-        camConfig.m_depth_image.m_height = depth_img["height"].get<uint32_t>();
-        camConfig.m_depth_image.m_fps = depth_img["fps"].get<uint32_t>();
-        camConfig.m_depth_image.m_fmt = depth_img["format"].get<int32_t>();
+      auto deep_comp = camera["deep_comp"];
+      YLLOG_INFO("Found %zu compress streams for camera %d", deep_comp.size(), camConfig.m_id);
+      
+      int compress_count = 0;
+      for (auto &comp : deep_comp) {
+        compress_count++;
+        auto compress_cfg = comp["compress"];
         
-        YLLOG_INFO("Depth configuration:");
-        YLLOG_INFO("  Resolution: %ux%u", camConfig.m_depth_image.m_width, camConfig.m_depth_image.m_height);
-        YLLOG_INFO("  FPS: %u", camConfig.m_depth_image.m_fps);
-        YLLOG_INFO("  Format: %d", camConfig.m_depth_image.m_fmt);
+        ImageCompressConfig_t compressConfig;
+        compressConfig.m_name = compress_cfg["name"].get<std::string>();
+        compressConfig.m_width = compress_cfg["width"].get<uint32_t>();
+        compressConfig.m_height = compress_cfg["height"].get<uint32_t>();
+        compressConfig.m_fps = compress_cfg["fps"].get<uint32_t>();
+        compressConfig.m_fmt = compress_cfg["format"].get<int32_t>();
+        compressConfig.m_topic = compress_cfg["topic"].get<std::string>();
+        compressConfig.m_b_enable = compress_cfg["enable"].get<bool>();
+        
+        YLLOG_INFO("  Compress %d:", compress_count);
+        YLLOG_INFO("    Name: %s", compressConfig.m_name.c_str());
+        YLLOG_INFO("    Topic: %s", compressConfig.m_topic.c_str());
+        YLLOG_INFO("    Resolution: %ux%u", compressConfig.m_width, compressConfig.m_height);
+        YLLOG_INFO("    FPS: %u", compressConfig.m_fps);
+        YLLOG_INFO("    Format: %d", compressConfig.m_fmt);
+        YLLOG_INFO("    Enabled: %s", compressConfig.m_b_enable ? "true" : "false");
+        
+        camConfig.m_compress_streams.push_back(compressConfig);
+      }
+      
+      YLLOG_INFO("Successfully parsed %zu compress streams for camera %d", camConfig.m_compress_streams.size(), camConfig.m_id);
         
     } catch (const std::exception& e) {
-        YLLOG_ERR("Failed to parse depth config for camera %d: %s", camConfig.m_id, e.what());
-        // 深度配置失败不影响主流程，继续处理
+      YLLOG_ERR("Failed to parse compress streams for camera %d: %s", camConfig.m_id, e.what());
+      // 压缩流解析失败不影响主流程，继续处理
     }
-
-
-     // 解析话题配置
-    try {
-        camConfig.m_topic_color_image_raw = camera["sub_topic_color_image_raw"].get<std::string>();
-        camConfig.m_topic_depth_image_raw = camera["sub_topic_depth_image_raw"].get<std::string>();
-        camConfig.m_topic_left_ir_image_raw = camera["sub_topic_left_ir_image_raw"].get<std::string>();
-        camConfig.m_topic_right_ir_image_raw = camera["sub_topic_right_ir_image_raw"].get<std::string>();
-        
-        YLLOG_INFO("ROS2 Topics:");
-        YLLOG_INFO("  Color: %s", camConfig.m_topic_color_image_raw.c_str());
-        YLLOG_INFO("  Depth: %s", camConfig.m_topic_depth_image_raw.c_str());
-        YLLOG_INFO("  Left IR: %s", camConfig.m_topic_left_ir_image_raw.c_str());
-        YLLOG_INFO("  Right IR: %s", camConfig.m_topic_right_ir_image_raw.c_str());
-        
-    } catch (const std::exception& e) {
-        YLLOG_ERR("Failed to parse topics for camera %d: %s", camConfig.m_id, e.what());
-        continue;
-    }
-
-
 
     m_camera_config_[camConfig.m_id] = camConfig;
   }
+  
   m_chn_offset_ = m_camera_config_.size();
-
   return true;
 }
 
-#if 0
-bool RobotVideoServer::loadCameraConfig(const std::string &config_file_path) {
-  std::ifstream file(config_file_path);
-  if (!file.is_open()) {
-    YLLOG_ERR("Failed to open JSON file: %s", config_file_path.c_str());
-    return false;
-  }
 
-  nlohmann::json jsonData;
-  file >> jsonData;
 
-  m_b_use_sdk_ = jsonData["use_sdk"].get<bool>();
-
-  auto cameras = jsonData["cameras"];
-  for (auto &camera : cameras) {
-    CameraConfig_t camConfig;
-
-    camConfig.m_id = camera["id"].get<int32_t>();
-    camConfig.m_rtsp_chn = camera["rtsp_chn"].get<int32_t>();
-    camConfig.m_b_enable = camera["enable"].get<bool>();
-    camConfig.m_b_enable_depth = camera["enable_depth"].get<bool>();
-    camConfig.m_name_ = camera["name"].get<std::string>();
-    camConfig.m_serial_num = camera["serial_num"].get<std::string>();
-    camConfig.m_topic_color_image_raw =
-        camera["sub_topic_color_image_raw"].get<std::string>();
-    camConfig.m_topic_depth_image_raw =
-        camera["sub_topic_depth_image_raw"].get<std::string>();
-
-    camConfig.m_color_image.m_width =
-        camera["color_image"]["width"].get<uint32_t>();
-    camConfig.m_color_image.m_height =
-        camera["color_image"]["height"].get<uint32_t>();
-    camConfig.m_color_image.m_fps =
-        camera["color_image"]["fps"].get<uint32_t>();
-    camConfig.m_color_image.m_fmt =
-        camera["color_image"]["format"].get<int32_t>();
-
-    camConfig.m_depth_image.m_width =
-        camera["depth_image"]["width"].get<uint32_t>();
-    camConfig.m_depth_image.m_height =
-        camera["depth_image"]["height"].get<uint32_t>();
-    camConfig.m_depth_image.m_fps =
-        camera["depth_image"]["fps"].get<uint32_t>();
-    camConfig.m_depth_image.m_fmt =
-        camera["depth_image"]["format"].get<int32_t>();
-
-    camConfig.m_enc_image.m_width =
-        camera["enc_image"]["width"].get<uint32_t>();
-    camConfig.m_enc_image.m_height =
-        camera["enc_image"]["height"].get<uint32_t>();
-    camConfig.m_enc_image.m_fps = camera["enc_image"]["fps"].get<uint32_t>();
-    camConfig.m_enc_image.m_fmt = camera["enc_image"]["format"].get<int32_t>();
-    camConfig.m_enc_image.m_bitrate =
-        camera["enc_image"]["bitrate"].get<uint32_t>();
-
-    m_camera_config_[camConfig.m_id] = camConfig;
-  }
-
-  YLLOG_DBG("use_sdk: %s",  m_b_use_sdk_ ? "true" : "false");
-
-  for (const auto &pair : m_camera_config_) {
-    const auto &camConfig = pair.second;
-
-    YLLOG_DBG("Camera Serial: %s", camConfig.m_serial_num.c_str());
-    YLLOG_DBG("ID: %d", camConfig.m_id);
-    YLLOG_DBG("Rtsp Chn: %d", camConfig.m_rtsp_chn);
-    YLLOG_DBG("Name: %s", camConfig.m_name_.c_str());
-    YLLOG_DBG("Color Image: %dx%d @ %d FPS, Format: %d",
-              camConfig.m_color_image.m_width, camConfig.m_color_image.m_height,
-              camConfig.m_color_image.m_fps, camConfig.m_color_image.m_fmt);
-    YLLOG_DBG("Depth Image: %dx%d @ %d FPS, Format: %d",
-              camConfig.m_depth_image.m_width, camConfig.m_depth_image.m_height,
-              camConfig.m_depth_image.m_fps, camConfig.m_depth_image.m_fmt);
-    YLLOG_DBG("Encoded Image: %dx%d @ %d FPS, Format: %d bitrate: %d",
-              camConfig.m_enc_image.m_width, camConfig.m_enc_image.m_height,
-              camConfig.m_enc_image.m_fps, camConfig.m_enc_image.m_fmt,
-              camConfig.m_enc_image.m_bitrate);
-    YLLOG_DBG("Color Image Raw Topic: %s",
-              camConfig.m_topic_color_image_raw.c_str());
-    YLLOG_DBG("Depth Image Raw Topic: %s",
-              camConfig.m_topic_depth_image_raw.c_str());
-    YLLOG_DBG("chn enable: %d, depth enable: %d", camConfig.m_b_enable,
-              camConfig.m_b_enable_depth);
-    YLLOG_DBG("--------------------------------------------------");
-  }
-
-  m_chn_offset_ = m_camera_config_.size();
-
-  return true;
-}
-#endif
 
 bool RobotVideoServer::loadLoggerConfig(const std::string &config_file_path) {
   std::ifstream file(config_file_path);

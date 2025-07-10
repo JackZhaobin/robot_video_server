@@ -9,61 +9,8 @@
                     "fps": 30,
                     "format": 0,
                     "bitrate": 8192,
-                    "rtsp_chn": 0,
-                    "enable": true
-                }
-
-            },
-            {
-                "image":{
-                    "name":"left_ir_image",
-                    "width": 640,
-                    "height": 480,
-                    "fps": 30,
-                    "format": 1,
-                    "bitrate": 8192,
-                    "rtsp_chn": 1,
-                    "enable": true
-                }
-            },
-            {
-                "image":{
-                    "name":"right_ir_image",
-                    "width": 640,
-                    "height": 480,
-                    "fps": 30,
-                    "format": 1,
-                    "bitrate": 8192,
-                    "rtsp_chn": 2,
-                    "enable": true
-                }
-            }],
-            "depth_image": {
-                "width": 640,
-                "height": 480,
-                "fps": 30,
-                "format":0
-            },
-            "id": 0,
-            "name": "front",
-            "serial_num": "CL8M84100GK",
-            "sub_topic_color_image_raw": "/camera_head_front/color/image_raw",
-            "sub_topic_depth_image_raw": "/camera_head_front/depth/image_raw",
-            "sub_topic_left_ir_image_raw": "/camera_head_front/left_ir/image_raw",
-            "sub_topic_right_ir_image_raw": "/camera_head_front/right_ir/image_raw",
-            "enable_depth": true,
-            "enable_stream": true
-        },
-        {
-            "video_image":[{
-                "image":{
-                    "name":"color_image",
-                    "width": 640,
-                    "height": 480,
-                    "fps": 30,
-                    "format": 0,
-                    "bitrate": 8192,
                     "rtsp_chn": 3,
+                    "topic":"/left/color/image_raw",
                     "enable": true
                 }
             },
@@ -76,6 +23,7 @@
                     "format": 1,
                     "bitrate": 8192,
                     "rtsp_chn": 4,
+                    "topic":"/left/left_ir/image_raw",
                     "enable": true
                 }
             },
@@ -88,82 +36,53 @@
                     "format": 1,
                     "bitrate": 8192,
                     "rtsp_chn": 5,
+                    "topic":"/left/right_ir/image_raw",
                     "enable": true
                 }
 
             }],
-            "depth_image": {
-                "width": 640,
-                "height": 480,
-                "fps": 30,
-                "format":0
+            "deep_comp":[{
+                "compress":{
+                    "name":"depth_compress",
+                    "width": 640,
+                    "height": 480,
+                    "fps": 30,
+                    "format":0,
+                    "topic":"/left/depth/image_raw",
+                    "enable":true
+                }
+
+            }, 
+            {
+                "compress":{
+                    "name":"left_ir_compress",
+                    "width": 640,
+                    "height": 480,
+                    "fps": 30,
+                    "format":0,
+                    "topic":"/left/left_ir/image_raw",
+                    "enable":false
+                }
+
+
             },
-            "id": 1,
+            {
+                "compress":{
+                    "name":"right_ir_compress",
+                    "width": 640,
+                    "height": 480,
+                    "fps": 30,
+                    "format":0,
+                    "topic":"/left/right_ir/image_raw",
+                    "enable":false
+                }
+            }],
+            "id": 0,
             "name": "left",
             "serial_num": "CL8M84100LEFT",
-            "sub_topic_color_image_raw": "/left/color/image_raw",
-            "sub_topic_depth_image_raw": "/left/depth/image_raw",
-            "sub_topic_left_ir_image_raw": "/left/left_ir/image_raw",
-            "sub_topic_right_ir_image_raw": "/left/right_ir/image_raw",
-            "enable_depth": true ,
-            "enable_stream": true
+            "enable_compress": true,
+            "enable_stream": false
        
-        },
-        {
-            "video_image":[{
-                "image":{
-                    "name":"color_image",
-                    "width": 640,
-                    "height": 480,
-                    "fps": 30,
-                    "format": 0,
-                    "bitrate": 8192,
-                    "rtsp_chn": 6,
-                    "enable": true
-                }
-            },
-            {
-                "image":{
-                    "name":"left_ir_image",
-                    "width": 640,
-                    "height": 480,
-                    "fps": 30,
-                    "format": 1,
-                    "bitrate": 8192,
-                    "rtsp_chn": 7,
-                    "enable": true
-                }
-            },
-            {
-                "image":{
-                    "name":"right_ir_image",
-                    "width": 640,
-                    "height": 480,
-                    "fps": 30,
-                    "format": 1,
-                    "bitrate": 8192,
-                    "rtsp_chn": 8,
-                    "enable": true
-                }
-
-            }],
-            "depth_image": {
-                "width": 640,
-                "height": 480,
-                "fps": 30,
-                "format":0
-            },
-            "id": 2,
-            "name": "right",
-            "serial_num": "CL8M84100LEFT",
-            "sub_topic_color_image_raw": "/right/color/image_raw",
-            "sub_topic_depth_image_raw": "/right/depth/image_raw",
-            "sub_topic_left_ir_image_raw": "/right/left_ir/image_raw",
-            "sub_topic_right_ir_image_raw": "/right/right_ir/image_raw",
-            "enable_depth": true,
-            "enable_stream": true
-       
-        }
-    ]
+        }]
 }
   

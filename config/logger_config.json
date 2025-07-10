@@ -2,7 +2,7 @@
   "log": {
     "console": {
       "enable": true,
-      "level": 2
+      "level": 4
     },
     "file": {
       "enable": true,
