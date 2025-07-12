@@ -78,43 +78,98 @@ bool RobotVideoServer::setupROS2MultiStream() {
                            stream_name = stream.m_name, 
                            stream_format = stream.m_fmt](
                                const sensor_msgs::msg::Image::SharedPtr msg) {
-        
-        auto size = msg->width * msg->height * 3 / 2;  // YUV420M size
-        
-        Image_t *image_ptr = (Image_t *)malloc(sizeof(Image_t) + size);
-        image_ptr->m_width = msg->width;
-        image_ptr->m_height = msg->height;
-        image_ptr->m_pixfmt = 0;
-        image_ptr->m_length = size;
-        
-        uint64_t sec = msg->header.stamp.sec;
-        uint64_t nsec = msg->header.stamp.nanosec;
-        image_ptr->m_timestamp = sec * 1000000ULL + nsec / 1000ULL;
 
-        // 根据流格式进行相应转换
-        switch(stream_format) {
-          case 0:  // RGB
-            convertRGB2YUV420M(msg->data.data(), msg->width, msg->height,
-                              image_ptr->m_data);
-            break;
-          case 1:  // Y8/IR
-            convertY8ToYUV420M(msg->data.data(), msg->width, msg->height,
-                              image_ptr->m_data);
-            break;
-          default:
-            YLLOG_ERR("Unsupported format: %d", stream_format);
-            free(image_ptr);
-            return;
+        
+        if (m_use_software_encoder_) 
+        {
+
+           YLLOG_INFO("=== m_use_software_encoder_ ===");
+
+            // 根据输入格式计算数据大小
+            uint32_t size;
+            if (stream_format == 0) {  // RGB
+                size = msg->width * msg->height * 3;
+            } else {  // Y8
+                size = msg->width * msg->height;
+            }
+            
+            Image_t *image_ptr = (Image_t *)malloc(sizeof(Image_t) + size);
+            image_ptr->m_width = msg->width;
+            image_ptr->m_height = msg->height;
+            image_ptr->m_pixfmt = stream_format;
+            image_ptr->m_length = size;
+            
+            uint64_t sec = msg->header.stamp.sec;
+            uint64_t nsec = msg->header.stamp.nanosec;
+            image_ptr->m_timestamp = sec * 1000000ULL + nsec / 1000ULL;
+
+
+
+            memcpy(image_ptr->m_data, msg->data.data(), size);
+            // 发送到软件编码器
+            auto camera_encoders = m_software_stream_encoders_.find(camera_id);
+            if (camera_encoders != m_software_stream_encoders_.end()) {
+                auto encoder = camera_encoders->second.find(stream_name);
+                if (encoder != camera_encoders->second.end()) {
+                    encoder->second->putImage(image_ptr);
+                } else {
+                    YLLOG_ERR("Software encoder not found for camera %d, stream %s", 
+                              camera_id, stream_name.c_str());
+                    //free(image_ptr);
+                }
+            } else {
+                YLLOG_ERR("Camera software encoders not found for camera %d", camera_id);
+                //fee(image_ptr);
+            }
+
+        }else{
+
+              YLLOG_INFO("=== not use m_use_software_encoder_ ===");
+
+              auto size = msg->width * msg->height * 3 / 2;  // YUV420M size
+        
+              Image_t *image_ptr = (Image_t *)malloc(sizeof(Image_t) + size);
+              image_ptr->m_width = msg->width;
+              image_ptr->m_height = msg->height;
+              image_ptr->m_pixfmt = 0;
+              image_ptr->m_length = size;
+
+              uint64_t sec = msg->header.stamp.sec;
+              uint64_t nsec = msg->header.stamp.nanosec;
+              image_ptr->m_timestamp = sec * 1000000ULL + nsec / 1000ULL;
+
+
+              //硬件编码器：需要转换为YUV420M格式（保持原有逻辑）
+              // 根据流格式进行相应转换
+              switch(stream_format) {
+                case 0:  // RGB
+                  convertRGB2YUV420M(msg->data.data(), msg->width, msg->height,
+                                    image_ptr->m_data);
+                  break;
+                case 1:  // Y8/IR
+                  convertY8ToYUV420M(msg->data.data(), msg->width, msg->height,
+                                    image_ptr->m_data);
+                  break;
+                default:
+                  YLLOG_ERR("Unsupported format: %d", stream_format);
+                  free(image_ptr);
+                  return;
+              }
+
+              // 发送到对应的编码器
+              auto camera_encoders = m_stream_encoders_.find(camera_id);
+              if (camera_encoders != m_stream_encoders_.end()) {
+                auto encoder = camera_encoders->second.find(stream_name);
+                if (encoder != camera_encoders->second.end()) {
+                  encoder->second->putImage(image_ptr);
+                }
+              }
+
         }
 
-        // 发送到对应的编码器
-        auto camera_encoders = m_stream_encoders_.find(camera_id);
-        if (camera_encoders != m_stream_encoders_.end()) {
-          auto encoder = camera_encoders->second.find(stream_name);
-          if (encoder != camera_encoders->second.end()) {
-            encoder->second->putImage(image_ptr);
-          }
-        }
+
+
+        
       };
 
       auto subscription = this->create_subscription<sensor_msgs::msg::Image>(topic_name, 10, ImageCallback);
@@ -350,42 +405,98 @@ bool RobotVideoServer::setupVideoEncoder() {
       continue;
     }
 
-    // 为每个相机的每个视频流创建编码器
-    std::map<std::string, std::shared_ptr<VideoEncoder>> camera_encoders;
-    int stream_index = 0;
-        
-    for (auto &stream : camera.second.m_video_streams) {
-      if (!stream.m_b_enable) {
-        stream_index++;
-        continue;
-      }
-      
-      EncCreateParam_t create_param;
-      create_param.m_raw_pixfmt = V4L2_PIX_FMT_YUV420M;
-      create_param.m_width = stream.m_width;
-      create_param.m_height = stream.m_height;
-      create_param.m_encoder_pixfmt = 0;  // H264
-      create_param.m_encode_width = stream.m_width;
-      create_param.m_encode_height = stream.m_height;
-      create_param.m_fps = stream.m_fps;
-      create_param.m_bitrate = stream.m_bitrate * 1024;
-      create_param.m_ratecontrol = 1;  // CBR
-      create_param.m_rtsp_chn_id = stream.m_rtsp_chn;
 
-      uint32_t encoder_id = camera.second.m_id * 100 + stream_index;
-      auto p_encoder = std::make_shared<VideoEncoder>(encoder_id, create_param);
-      
-      if (p_encoder->start()) {
-        camera_encoders[stream.m_name] = p_encoder;
-        YLLOG_INFO("Created encoder for camera %d, stream %s, RTSP channel %d", 
-                  camera.second.m_id, stream.m_name.c_str(), stream.m_rtsp_chn);
-      } else {
-        YLLOG_ERR("Failed to start encoder for camera %d, stream %s", 
-                  camera.second.m_id, stream.m_name.c_str());
-      }
-      stream_index++;
+
+
+    if(m_use_software_encoder_)
+    {
+        // 使用软件编码器
+        std::map<std::string, std::shared_ptr<SoftwareVideoEncoder>> camera_encoders;
+        int stream_index = 0;
+        
+        for (auto &stream : camera.second.m_video_streams) {
+            if (!stream.m_b_enable) {
+                stream_index++;
+                continue;
+            }
+            
+            SoftwareEncCreateParam_t create_param;
+            create_param.m_width = stream.m_width;
+            create_param.m_height = stream.m_height;
+            create_param.m_fps = stream.m_fps;
+            create_param.m_bitrate = stream.m_bitrate * 1000;  // 转换为bps
+            create_param.m_rtsp_chn_id = stream.m_rtsp_chn;
+            
+            // 根据格式设置输入像素格式
+            if (stream.m_fmt == 0) {
+                create_param.m_input_format = InputPixelFormat::RGB24;
+            } else if (stream.m_fmt == 1) {
+                create_param.m_input_format = InputPixelFormat::GRAY8;
+            }
+            
+            // 如果配置中有编码器相关参数，则使用
+            // create_param.m_codec_name = stream.codec; // 需要在配置解析中添加
+            // create_param.m_preset = stream.preset;    // 需要在配置解析中添加
+            
+            uint32_t encoder_id = camera.second.m_id * 100 + stream_index;
+            auto p_encoder = std::make_shared<SoftwareVideoEncoder>(encoder_id, create_param);
+            
+            if (p_encoder->start()) {
+                camera_encoders[stream.m_name] = p_encoder;
+                YLLOG_INFO("Created software encoder for camera %d, stream %s", 
+                          camera.second.m_id, stream.m_name.c_str());
+            } else {
+                YLLOG_ERR("Failed to start software encoder for camera %d, stream %s", 
+                          camera.second.m_id, stream.m_name.c_str());
+            }
+            stream_index++;
+        }
+        m_software_stream_encoders_[camera.second.m_id] = camera_encoders;
+
     }
-    m_stream_encoders_[camera.second.m_id] = camera_encoders;
+    else{
+
+        // 为每个相机的每个视频流创建编码器
+        std::map<std::string, std::shared_ptr<VideoEncoder>> camera_encoders;
+        int stream_index = 0;
+            
+        for (auto &stream : camera.second.m_video_streams) {
+          if (!stream.m_b_enable) {
+            stream_index++;
+            continue;
+          }
+          
+          EncCreateParam_t create_param;
+          create_param.m_raw_pixfmt = V4L2_PIX_FMT_YUV420M;
+          create_param.m_width = stream.m_width;
+          create_param.m_height = stream.m_height;
+          create_param.m_encoder_pixfmt = 0;  // H264
+          create_param.m_encode_width = stream.m_width;
+          create_param.m_encode_height = stream.m_height;
+          create_param.m_fps = stream.m_fps;
+          create_param.m_bitrate = stream.m_bitrate * 1024;
+          create_param.m_ratecontrol = 1;  // CBR
+          create_param.m_rtsp_chn_id = stream.m_rtsp_chn;
+
+          uint32_t encoder_id = camera.second.m_id * 100 + stream_index;
+          auto p_encoder = std::make_shared<VideoEncoder>(encoder_id, create_param);
+          
+          if (p_encoder->start()) {
+            camera_encoders[stream.m_name] = p_encoder;
+            YLLOG_INFO("Created encoder for camera %d, stream %s, RTSP channel %d", 
+                      camera.second.m_id, stream.m_name.c_str(), stream.m_rtsp_chn);
+          } else {
+            YLLOG_ERR("Failed to start encoder for camera %d, stream %s", 
+                      camera.second.m_id, stream.m_name.c_str());
+          }
+          stream_index++;
+        }
+        m_stream_encoders_[camera.second.m_id] = camera_encoders;
+    }
+
+
+
+
 
     /*
      * 修改：为每个压缩流创建独立的编码器
@@ -491,21 +602,52 @@ void RobotVideoServer::destroyVideoStreamEncoders() {
 }
 
 
-#if 0
 void RobotVideoServer::destroyVideoEncoder() {
 
-  destroyVideoStreamEncoders(); 
 
-  for (auto &depthEncoder : m_depth_encoders_) {
-    depthEncoder.second->stop();
-  }
-  m_depth_encoders_.clear();
-}
-#endif
+    // 销毁软件编码器
+    if (m_use_software_encoder_) {
+        for (auto &camera_encoders : m_software_stream_encoders_) {
+            int32_t camera_id = camera_encoders.first;
+            
+            YLLOG_DBG("Destroying software encoders for camera %d", camera_id);
+            
+            for (auto &stream_encoder : camera_encoders.second) {
+                const std::string &stream_name = stream_encoder.first;
+                auto &encoder = stream_encoder.second;
+                
+                if (encoder) {
+                    YLLOG_DBG("Stopping software encoder for camera %d, stream %s", 
+                              camera_id, stream_name.c_str());
+                    
+                    try {
+                        encoder->stop();
+                        YLLOG_DBG("Successfully stopped software encoder for camera %d, stream %s", 
+                                  camera_id, stream_name.c_str());
+                    } catch (const std::exception& e) {
+                        YLLOG_ERR("Exception while stopping software encoder for camera %d, stream %s: %s", 
+                                  camera_id, stream_name.c_str(), e.what());
+                    }
+                } else {
+                    YLLOG_WARN("Null software encoder found for camera %d, stream %s", 
+                               camera_id, stream_name.c_str());
+                }
+            }
+            
+            camera_encoders.second.clear();
+        }
+        
+        m_software_stream_encoders_.clear();
+        YLLOG_INFO("All software encoders destroyed");
+    }
+    else{
+      // 销毁视频流编码器
+      destroyVideoStreamEncoders(); 
+    }
 
-void RobotVideoServer::destroyVideoEncoder() {
-  // 销毁视频流编码器
-  destroyVideoStreamEncoders(); 
+
+
+
 
   // 销毁压缩流编码器
   for (auto &camera_compress_encoders : m_compress_encoders_) {
@@ -566,6 +708,10 @@ void RobotVideoServer::destroyVideoEncoder() {
   
   YLLOG_INFO("All compress encoders destroyed");
 }
+  
+
+
+
 
 bool RobotVideoServer::setupRtspServer() {
   //RtspServerWrapper::getInstance()->init(8554, 3);

@@ -25,6 +25,11 @@
 #include "yhdds.h"
 #include "yllog.h"
 
+#include "software_video_encoder.h"
+
+
+
+
 // enum { IMAGE_TYPE_COLOR = 0, IMAGE_TYPE_DEPTH, IMAGE_TYPE_END } ImageType_e;
 
 // 新增深度压缩配置结构体
@@ -113,15 +118,11 @@ class RobotVideoServer : public rclcpp::Node {
   std::map<int32_t, std::shared_ptr<VideoCapture>> m_captures_;
 
  
-  //std::map<int32_t, rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> m_depth_image_subs;
   std::map<int32_t, std::map<std::string, rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr>> m_compress_subs_;
 
 
 
-  /*compress 编码1路*/
-  // std::map<int32_t, std::shared_ptr<DepthImageEncoder>> m_depth_encoders_;
-  // std::map<int32_t, CDataWriter*> m_depth_writers;
-  // std::map<int32_t, uint32_t> m_depth_frame_ids;
+
 
    /*compress 编码多路*/
   std::map<int32_t, std::map<std::string, std::shared_ptr<DepthImageEncoder>>> m_compress_encoders_;
@@ -137,4 +138,13 @@ class RobotVideoServer : public rclcpp::Node {
  
   std::map<int32_t, std::map<std::string, std::shared_ptr<VideoEncoder>>> m_stream_encoders_;
   std::map<int32_t, std::map<std::string, rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr>> m_image_subs_;
+
+
+
+  // 软件编码器映射 (与硬件编码器并行)
+    std::map<int32_t, std::map<std::string, std::shared_ptr<SoftwareVideoEncoder>>> m_software_stream_encoders_;
+    
+    // 编码器类型选择
+   // bool m_use_software_encoder_ = false;  // 配置项：是否使用软件编码器
+   bool m_use_software_encoder_ = true; 
 };

@@ -20,6 +20,18 @@ find_package(robot_interface REQUIRED)
 # 查找 CUDA
 find_package(CUDA REQUIRED)
 
+# 查找FFmpeg库 新增加
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG REQUIRED 
+    libavcodec 
+    libavformat 
+    libavutil 
+    libswscale
+)
+
+
+
+
 link_directories(/usr/local/cuda-12.2/lib64)
 link_directories(/usr/lib/aarch64-linux-gnu)
 link_directories(/usr/lib/aarch64-linux-gnu/tegra)
@@ -46,15 +58,26 @@ include_directories(
     /usr/lib/aarch64-linux-gnu/tegra
     /usr/lib/aarch64-linux-gnu/tegra-egl
     /usr/lib/aarch64-linux-gnu/nvidia
+    ${FFMPEG_INCLUDE_DIRS}  
 )
 
 file(GLOB SOURCES "src/*.cpp" "nvidia/common/classes/*.cpp")
 
 add_executable(robot_video_server ${SOURCES})
 
+
+# 如果您的项目有多个可执行文件，请相应调整
+# set(EXECUTABLE_NAME robot_video_server)
+
+# target_include_directories(${EXECUTABLE_NAME} PRIVATE
+#     ${CMAKE_CURRENT_SOURCE_DIR}/include
+#     ${FFMPEG_INCLUDE_DIRS}  # FFmpeg头文件目录
+# )
+
 target_link_libraries(robot_video_server 
     ${OpenCV_LIBS}
     # ${CUDA_LIBRARIES}
+    ${FFMPEG_LIBRARIES}
     nvv4l2
     nvvideo
     nvmedia
