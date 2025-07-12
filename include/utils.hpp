@@ -73,3 +73,6 @@ uint64_t getStartupTimeMs();
 uint64_t getCurrentTimeMs();
 
 uint64_t getCurrentTimeUs();
+
+bool saveY8Image(const uint8_t* data, int width, int height, const std::string& filename);
+bool saveY16Image(const uint16_t* data, int width, int height, const std::string& filename);

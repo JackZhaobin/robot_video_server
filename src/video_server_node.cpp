@@ -139,13 +139,110 @@ bool RobotVideoServer::setupROS2MultiStream() {
         }
 
         auto CompressCallback = [this, camera_id = camera.second.m_id, 
-                              compress_name = compress_stream.m_name](
+                              compress_name = compress_stream.m_name,compress_format = compress_stream.m_fmt](
                                   const sensor_msgs::msg::Image::SharedPtr msg) {
-          
-          uint32_t size = msg->data.size();
-          Image_t *image_ptr = (Image_t *)malloc(sizeof(Image_t) + size);
+
+          // 静态计数器，只保存前几帧用于调试
+            static std::atomic<int> frame_counter{0};
+            int current_frame = frame_counter.fetch_add(1);
+            
+            YLLOG_INFO("=== CompressCallback Debug Info (Frame %d) ===", current_frame);
+            YLLOG_INFO("Camera ID: %d, Stream: %s", camera_id, compress_name.c_str());
+            YLLOG_INFO("ROS encoding: %s", msg->encoding.c_str());
+            YLLOG_INFO("Image size: %ux%u", msg->width, msg->height);
+            YLLOG_INFO("Data size: %zu bytes", msg->data.size());
+            
+            Image_t *image_ptr = nullptr;
+
+
+
+          YLLOG_DBG("compress_format = %d", compress_format);
+          if (msg->encoding == "mono8" || compress_format == 1) {  // Y8格式
+              
+              YLLOG_INFO(">>> Taking Y8->Y16 conversion path <<<");
+        
+              size_t expected_y8_size = msg->width * msg->height;
+              if (msg->data.size() != expected_y8_size) {
+                  YLLOG_ERR("Y8 data size mismatch: expected %zu, got %zu", 
+                            expected_y8_size, msg->data.size());
+                  return;
+              }
+              
+              // === 保存原始Y8数据 ===
+              if (current_frame < 3) {  // 只保存前3帧
+                  std::string y8_filename = "/tmp/debug_y8_frame_" + std::to_string(current_frame) + 
+                                          "_cam" + std::to_string(camera_id) + 
+                                          "_" + compress_name + ".raw";
+                  
+                  if (saveY8Image(msg->data.data(), msg->width, msg->height, y8_filename)) {
+                      YLLOG_INFO("Original Y8 data saved to: %s", y8_filename.c_str());
+                      
+                      // 输出详细信息用于工具查看
+                      YLLOG_INFO("To view with ImageJ or similar tools:");
+                      YLLOG_INFO("  File: %s", y8_filename.c_str());
+                      YLLOG_INFO("  Format: 8-bit grayscale");
+                      YLLOG_INFO("  Width: %u, Height: %u", msg->width, msg->height);
+                      YLLOG_INFO("  Size: %zu bytes", msg->data.size());
+                  }
+              }
+
+
+              // === Y8转Y16转换 ===
+              uint32_t y16_size = msg->width * msg->height * 2;
+              image_ptr = (Image_t *)malloc(sizeof(Image_t) + y16_size);
+              
+              const uint8_t* y8_data = msg->data.data();
+              uint16_t* y16_data = (uint16_t*)image_ptr->m_data;
+              
+              size_t pixel_count = msg->width * msg->height;
+              for (size_t i = 0; i < pixel_count; i++) {
+                  //y16_data[i] = static_cast<uint16_t>(y8_data[i]) * 257;
+                  y16_data[i] = static_cast<uint16_t>(y8_data[i])<<8 | y8_data[i];
+              }
+              
+              image_ptr->m_length = y16_size;
+              image_ptr->m_pixfmt = 0;
+              
+              // === 保存转换后的Y16数据 ===
+              if (current_frame < 3) {  // 只保存前3帧
+                  std::string y16_filename = "/tmp/debug_y16_frame_" + std::to_string(current_frame) + 
+                                          "_cam" + std::to_string(camera_id) + 
+                                          "_" + compress_name + ".raw";
+                  
+                  if (saveY16Image(y16_data, msg->width, msg->height, y16_filename)) {
+                      YLLOG_INFO("Converted Y16 data saved to: %s", y16_filename.c_str());
+                      
+                      // 输出详细信息用于工具查看
+                      YLLOG_INFO("To view with ImageJ or similar tools:");
+                      YLLOG_INFO("  File: %s", y16_filename.c_str());
+                      YLLOG_INFO("  Format: 16-bit grayscale");
+                      YLLOG_INFO("  Width: %u, Height: %u", msg->width, msg->height);
+                      YLLOG_INFO("  Size: %u bytes", y16_size);
+                      YLLOG_INFO("  Byte order: Little-Endian");
+                  }
+              }
+              
+              YLLOG_INFO("Conversion completed: %zu pixels", pixel_count);
+              YLLOG_INFO("First 5 converted values:");
+              for (int i = 0; i < std::min(5, (int)pixel_count); i++) {
+                  YLLOG_INFO("  Y8[%d]=%u -> Y16[%d]=%u", i, y8_data[i], i, y16_data[i]);
+              }
+
+                
+         } else if (msg->encoding == "mono16" || compress_format == 0) {  // Y16格式
+              // 直接使用
+              uint32_t size = msg->data.size();
+              image_ptr = (Image_t *)malloc(sizeof(Image_t) + size);
+              memcpy(image_ptr->m_data, msg->data.data(), size);
+              image_ptr->m_length = size;
+              image_ptr->m_pixfmt = 0;  // Y16格式
+         } else {
+              YLLOG_ERR("Unsupported encoding: %s", msg->encoding.c_str());
+              return;
+         }
           
           // 使用独立的帧ID计数器
+          
           auto camera_frame_ids = m_compress_frame_ids_.find(camera_id);
           if (camera_frame_ids != m_compress_frame_ids_.end()) {
             auto frame_id_it = camera_frame_ids->second.find(compress_name);
@@ -157,11 +254,16 @@ bool RobotVideoServer::setupROS2MultiStream() {
           } else {
             image_ptr->m_id = 1;
           }
+         //if(m_compress_frame_ids_[camera_id][compress_name])
+         //{
+          //  m_compress_frame_ids_[camera_id][compress_name]++;
+
+        // }
           
           image_ptr->m_width = msg->width;
           image_ptr->m_height = msg->height;
           image_ptr->m_pixfmt = 0;
-          image_ptr->m_length = size;
+          //image_ptr->m_length = size;
           
           uint64_t sec = msg->header.stamp.sec;
           uint64_t nsec = msg->header.stamp.nanosec;
@@ -171,7 +273,8 @@ bool RobotVideoServer::setupROS2MultiStream() {
                   compress_name.c_str(), image_ptr->m_timestamp, getCurrentTimeUs(), 
                   getCurrentTimeUs()-image_ptr->m_timestamp);
 
-          memcpy(image_ptr->m_data, msg->data.data(), msg->data.size());
+          /*已经赋值过了*/
+          //memcpy(image_ptr->m_data, msg->data.data(), msg->data.size());
 
           // 找到对应的独立编码器
           auto camera_encoders = m_compress_encoders_.find(camera_id);
@@ -182,12 +285,21 @@ bool RobotVideoServer::setupROS2MultiStream() {
             } else {
               YLLOG_ERR("Compress encoder not found for camera %d, stream %s", 
                         camera_id, compress_name.c_str());
-              free(image_ptr);
+              //free(image_ptr);
             }
           } else {
             YLLOG_ERR("Camera compress encoders not found for camera %d", camera_id);
-            free(image_ptr);
+            //free(image_ptr);
           }
+          /*
+          if(m_compress_encoders_[camera_id][compress_name])
+          {
+            m_compress_encoders_[camera_id][compress_name]->putImage(image_ptr);
+          }
+          else
+          {
+              YLLOG_ERR("Camera compress encoders not found for camera %d", camera_id);
+          }*/
         };
 
         auto p_compress_subscription = this->create_subscription<sensor_msgs::msg::Image>(
@@ -292,8 +404,8 @@ bool RobotVideoServer::setupVideoEncoder() {
         }
 
         // 为每个压缩流创建独立的topic
-        std::string compressed_topic = compress_stream.m_topic + "/compressed";
-        //std::string compressed_topic = compress_stream.m_topic + "/zdepth";
+        //std::string compressed_topic = compress_stream.m_topic + "/compressed";
+        std::string compressed_topic = compress_stream.m_topic + "/zdepth";
         
         // 为每个压缩流创建独立的数据写入器
         camera_compress_writers[compress_stream.m_name] = m_dds_wrapper->createDataWriter(compressed_topic);

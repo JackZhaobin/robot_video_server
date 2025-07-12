@@ -53,4 +53,6 @@ private:
 
     uint64_t m_last_time_ = 0;
     uint32_t m_count_ = 0;
+
+    uint32_t frame_count = 0;
 };

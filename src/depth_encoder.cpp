@@ -166,6 +166,21 @@ bool DepthImageEncoder::doEncode(Image_t *image_ptr) {
     return false;
   }
 
+  //在压缩前添加数据验证
+  //static int frame_count=0;
+  if(frame_count < 3)
+  {
+    std::string before_compression = "/tmp/debug_before_compression_frame_" + 
+                                    std::to_string(frame_count) + "_"+ std::to_string(m_chn_id_) + ".raw";
+
+
+    saveY16Image((uint16_t *)(image_ptr->m_data),image_ptr->m_width, image_ptr->m_height, before_compression) ;
+    frame_count++;
+  }
+
+
+
+
   Image_t *compressedImg = reinterpret_cast<Image_t *>(bufPtr->m_pBufPtr);
   compressedImg->m_id = image_ptr->m_id;
   compressedImg->m_width = image_ptr->m_width;

@@ -236,3 +236,53 @@ uint64_t getCurrentTimeUs() {
   gettimeofday(&t, NULL);
   return (uint64_t)t.tv_sec * 1000 * 1000 + t.tv_usec;
 }
+
+
+// 在utils.cpp中添加实现
+bool saveY8Image(const uint8_t* data, int width, int height, const std::string& filename) {
+    if (!data || width <= 0 || height <= 0) {
+        return false;
+    }
+    
+    std::ofstream file(filename, std::ios::binary);
+    if (!file) {
+        std::cerr << "Failed to create Y8 file: " << filename << std::endl;
+        return false;
+    }
+    
+    size_t total_bytes = width * height;
+    file.write(reinterpret_cast<const char*>(data), total_bytes);
+    
+    bool success = file.good();
+    file.close();
+    
+    if (success) {
+        std::cout << "Y8 image saved: " << filename << " (" << total_bytes << " bytes)" << std::endl;
+    }
+    
+    return success;
+}
+
+bool saveY16Image(const uint16_t* data, int width, int height, const std::string& filename) {
+    if (!data || width <= 0 || height <= 0) {
+        return false;
+    }
+    
+    std::ofstream file(filename, std::ios::binary);
+    if (!file) {
+        std::cerr << "Failed to create Y16 file: " << filename << std::endl;
+        return false;
+    }
+    
+    size_t total_bytes = width * height * 2;  // 16位 = 2字节
+    file.write(reinterpret_cast<const char*>(data), total_bytes);
+    
+    bool success = file.good();
+    file.close();
+    
+    if (success) {
+        std::cout << "Y16 image saved: " << filename << " (" << total_bytes << " bytes)" << std::endl;
+    }
+    
+    return success;
+}

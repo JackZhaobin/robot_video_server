@@ -1,6 +1,13 @@
 {
     "use_sdk": false,
     "cameras": [{
+        
+            "id": 0,
+            "name": "left",
+            "serial_num": "CL8M84100LEFT",
+            "enable_compress": true,
+            "enable_stream": true,
+
             "video_image":[{
                 "image":{
                     "name":"color_image",
@@ -9,7 +16,7 @@
                     "fps": 30,
                     "format": 0,
                     "bitrate": 8192,
-                    "rtsp_chn": 3,
+                    "rtsp_chn": 0,
                     "topic":"/left/color/image_raw",
                     "enable": true
                 }
@@ -22,7 +29,7 @@
                     "fps": 30,
                     "format": 1,
                     "bitrate": 8192,
-                    "rtsp_chn": 4,
+                    "rtsp_chn": 1,
                     "topic":"/left/left_ir/image_raw",
                     "enable": true
                 }
@@ -35,7 +42,7 @@
                     "fps": 30,
                     "format": 1,
                     "bitrate": 8192,
-                    "rtsp_chn": 5,
+                    "rtsp_chn": 2,
                     "topic":"/left/right_ir/image_raw",
                     "enable": true
                 }
@@ -59,9 +66,9 @@
                     "width": 640,
                     "height": 480,
                     "fps": 30,
-                    "format":0,
+                    "format":1,
                     "topic":"/left/left_ir/image_raw",
-                    "enable":false
+                    "enable":true
                 }
 
 
@@ -72,16 +79,12 @@
                     "width": 640,
                     "height": 480,
                     "fps": 30,
-                    "format":0,
+                    "format":1,
                     "topic":"/left/right_ir/image_raw",
-                    "enable":false
+                    "enable":true
                 }
-            }],
-            "id": 0,
-            "name": "left",
-            "serial_num": "CL8M84100LEFT",
-            "enable_compress": true,
-            "enable_stream": false
+            }]
+            
        
         }]
 }
